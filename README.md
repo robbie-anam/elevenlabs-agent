@@ -72,18 +72,3 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000), click **Start**, grant mic permission, and speak.
-
-## Deploy to Vercel
-
-1. Push to GitHub
-2. Import in [Vercel](https://vercel.com)
-3. Add the environment variables above in Vercel dashboard
-4. Deploy
-
-## Verification Checklist
-
-- [ ] Avatar lip-syncs to agent responses
-- [ ] No double audio (only hear audio from avatar, not from ElevenLabs SDK)
-- [ ] Interruption works (speak while agent is talking)
-- [ ] Transcript streams agent text in sync with avatar speech
-- [ ] `npm run build` succeeds (Vercel-compatible)
