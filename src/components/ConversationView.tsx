@@ -257,8 +257,14 @@ export default function ConversationView({
               { role: "user", text: message },
             ]);
           } else {
-            // Capture complete agent text as ground truth for finalize
+            // Capture complete agent text as ground truth for finalize.
+            // Also catch up streamingText immediately — fills gaps from
+            // audio chunks that arrived without alignment data.
             agentMessageTextRef.current = message;
+            if (message.length > streamingTextRef.current.length) {
+              streamingTextRef.current = message;
+              scheduleTextUpdate();
+            }
           }
         },
 
