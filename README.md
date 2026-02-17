@@ -10,6 +10,17 @@ User speaks → ElevenLabs SDK (mic) → WebSocket → ElevenLabs (STT → LLM �
 <video> ← Anam WebRTC ← sendAudioChunk() ← onAudio callback ← base64 PCM chunks
 ```
 
+## How It Works
+
+This app bridges two SDKs:
+
+- **[ElevenLabs](https://elevenlabs.io)** handles voice intelligence — the SDK captures microphone audio, sends it over a WebSocket to ElevenLabs' cloud (STT → LLM → TTS), and returns synthesized speech as base64 PCM chunks.
+- **[Anam](https://anam.ai)** handles avatar rendering — it takes those PCM audio chunks via `sendAudioChunk()` and generates a real-time lip-synced video face delivered over WebRTC.
+
+The ElevenLabs SDK's built-in speaker is muted (volume 0) so the user only hears audio through the avatar's WebRTC stream.
+
+**Streaming transcript:** The ElevenLabs SDK provides per-character timing data via the `onAudioAlignment` callback. The app uses this to reveal transcript text character-by-character in sync with the avatar's speech, offset by a render delay to account for Anam's face generation pipeline. See `src/hooks/useStreamingTranscript.ts` for the timing model.
+
 ## Setup
 
 ### 1. ElevenLabs Agent
@@ -71,5 +82,5 @@ Open [http://localhost:3000](http://localhost:3000), click **Start**, grant mic 
 - [ ] Avatar lip-syncs to agent responses
 - [ ] No double audio (only hear audio from avatar, not from ElevenLabs SDK)
 - [ ] Interruption works (speak while agent is talking)
-- [ ] Transcript shows both user and agent messages
+- [ ] Transcript streams agent text in sync with avatar speech
 - [ ] `npm run build` succeeds (Vercel-compatible)

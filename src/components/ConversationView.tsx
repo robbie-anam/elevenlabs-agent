@@ -1,19 +1,28 @@
+/**
+ * ConversationView — orchestrates an ElevenLabs voice agent with an Anam avatar.
+ *
+ * Audio flow:
+ *   User speaks → mic captured by ElevenLabs SDK → WebSocket → ElevenLabs cloud
+ *   (STT → LLM → TTS) → base64 PCM chunks arrive via onAudio callback →
+ *   forwarded to Anam via sendAudioChunk() → Anam generates a face video
+ *   stream delivered over WebRTC to the <video> element.
+ *
+ * The ElevenLabs SDK is muted (volume 0) so the user only hears audio through
+ * the avatar's WebRTC stream, avoiding double playback.
+ *
+ * Transcript streaming is handled by useStreamingTranscript — it schedules
+ * character reveals timed to match the avatar's speech using alignment data
+ * from ElevenLabs.
+ */
 "use client";
 
 import { useRef, useState, useCallback } from "react";
 import { AnamEvent, createClient, type AnamClient } from "@anam-ai/js-sdk";
 import { Conversation } from "@elevenlabs/client";
 import type { Preset } from "@/app/page";
+import { useStreamingTranscript } from "@/hooks/useStreamingTranscript";
 
-type Message = {
-  role: "user" | "agent";
-  text: string;
-  interrupted?: boolean;
-};
 type Status = "idle" | "connecting" | "connected" | "error";
-
-/** Approximate delay for Anam's face rendering pipeline (ms) */
-const RENDER_DELAY_MS = 500;
 
 export default function ConversationView({
   presets,
@@ -22,7 +31,6 @@ export default function ConversationView({
 }) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const anamClientRef = useRef<AnamClient | null>(null);
@@ -33,85 +41,14 @@ export default function ConversationView({
   const anamReadyRef = useRef(false);
   const audioBufferRef = useRef<string[]>([]);
 
-  // Streaming transcript refs
-  const speechStartTimeRef = useRef(0);
-  const cumulativeAudioMsRef = useRef(0);
-  const chunkAudioOffsetRef = useRef(0);
-  const pendingTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const streamingTextRef = useRef("");
-  const fullAgentTextRef = useRef("");
-  const agentMessageTextRef = useRef("");
-  const rafIdRef = useRef<number | null>(null);
-
-  const clearPendingTimers = useCallback(() => {
-    for (const id of pendingTimersRef.current) {
-      clearTimeout(id);
-    }
-    pendingTimersRef.current = [];
-    if (rafIdRef.current !== null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
-  }, []);
-
-  const resetStreamingState = useCallback(() => {
-    streamingTextRef.current = "";
-    fullAgentTextRef.current = "";
-    agentMessageTextRef.current = "";
-    cumulativeAudioMsRef.current = 0;
-    chunkAudioOffsetRef.current = 0;
-    speechStartTimeRef.current = 0;
-  }, []);
-
-  const scheduleTextUpdate = useCallback(() => {
-    if (rafIdRef.current !== null) return;
-    rafIdRef.current = requestAnimationFrame(() => {
-      rafIdRef.current = null;
-      const text = streamingTextRef.current;
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === "agent" && !last.interrupted) {
-          const updated = [...prev];
-          updated[updated.length - 1] = { ...last, text };
-          return updated;
-        }
-        return [...prev, { role: "agent", text }];
-      });
-    });
-  }, []);
-
-  const finalizeAgentMessage = useCallback(() => {
-    clearPendingTimers();
-    // Prefer the complete onMessage text (alignment data may be incomplete)
-    const finalText =
-      agentMessageTextRef.current ||
-      fullAgentTextRef.current ||
-      streamingTextRef.current;
-    if (finalText) {
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === "agent" && !last.interrupted) {
-          const updated = [...prev];
-          updated[updated.length - 1] = { ...last, text: finalText };
-          return updated;
-        }
-        if (!last || last.role !== "agent") {
-          return [...prev, { role: "agent", text: finalText }];
-        }
-        return prev;
-      });
-    }
-    resetStreamingState();
-  }, [clearPendingTimers, resetStreamingState]);
+  const transcript = useStreamingTranscript();
 
   const start = useCallback(async () => {
     setStatus("connecting");
     setError(null);
-    setMessages([]);
     anamReadyRef.current = false;
     audioBufferRef.current = [];
-    resetStreamingState();
-    clearPendingTimers();
+    transcript.reset();
 
     try {
       const { avatarId, agentId } = presets[selectedIndex];
@@ -149,31 +86,10 @@ export default function ConversationView({
       });
       anamClientRef.current = anamClient;
 
-      anamClient.addListener(AnamEvent.TALK_STREAM_INTERRUPTED, () => {
-        clearPendingTimers();
-        const partialText = streamingTextRef.current;
-        resetStreamingState();
-
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "agent") {
-            const updated = [...prev];
-            updated[updated.length - 1] = {
-              ...last,
-              text: partialText || last.text,
-              interrupted: true,
-            };
-            return updated;
-          }
-          if (partialText) {
-            return [
-              ...prev,
-              { role: "agent", text: partialText, interrupted: true },
-            ];
-          }
-          return prev;
-        });
-      });
+      anamClient.addListener(
+        AnamEvent.TALK_STREAM_INTERRUPTED,
+        transcript.handleInterrupt
+      );
 
       anamClient.addListener(AnamEvent.SESSION_READY, () => {
         // Flush any audio that arrived before Anam was ready
@@ -200,89 +116,40 @@ export default function ConversationView({
         signedUrl,
 
         onAudio: (base64Audio: string) => {
-          // Record wall-clock start on first chunk of a speech turn
-          if (cumulativeAudioMsRef.current === 0) {
-            speechStartTimeRef.current = Date.now();
-          }
-
-          // Snapshot pre-chunk offset for onAudioAlignment
-          chunkAudioOffsetRef.current = cumulativeAudioMsRef.current;
+          transcript.handleAudioChunk(base64Audio);
 
           if (anamReadyRef.current) {
             audioInputStreamRef.current?.sendAudioChunk(base64Audio);
           } else {
             audioBufferRef.current.push(base64Audio);
           }
-
-          // PCM 16-bit mono @ 16 kHz → duration
-          const paddingMatch = base64Audio.match(/=+$/);
-          const padding = paddingMatch ? paddingMatch[0].length : 0;
-          const bytes = (base64Audio.length * 3) / 4 - padding;
-          const durationMs = (bytes / 2 / 16000) * 1000;
-          cumulativeAudioMsRef.current += durationMs;
         },
 
-        onAudioAlignment: ({
-          chars,
-          char_start_times_ms,
-        }: {
-          chars: string[];
-          char_start_times_ms: number[];
-          char_durations_ms: number[];
-        }) => {
-          const baseTime = speechStartTimeRef.current;
-          const audioOffset = chunkAudioOffsetRef.current;
-          const now = Date.now();
-
-          for (let i = 0; i < chars.length; i++) {
-            // Accumulate full text immediately (used on finalize)
-            fullAgentTextRef.current += chars[i];
-
-            const revealAt =
-              baseTime + audioOffset + char_start_times_ms[i] + RENDER_DELAY_MS;
-            const delay = Math.max(0, revealAt - now);
-
-            const timer = setTimeout(() => {
-              streamingTextRef.current += chars[i];
-              scheduleTextUpdate();
-            }, delay);
-            pendingTimersRef.current.push(timer);
-          }
-        },
+        onAudioAlignment: transcript.handleAlignment,
 
         onMessage: ({ role, message }: { role: string; message: string }) => {
           if (role === "user") {
-            setMessages((prev) => [
-              ...prev,
-              { role: "user", text: message },
-            ]);
+            transcript.addUserMessage(message);
           } else {
-            // Capture complete agent text as ground truth for finalize.
-            // Also catch up streamingText immediately — fills gaps from
-            // audio chunks that arrived without alignment data.
-            agentMessageTextRef.current = message;
-            if (message.length > streamingTextRef.current.length) {
-              streamingTextRef.current = message;
-              scheduleTextUpdate();
-            }
+            transcript.handleAgentMessage(message);
           }
         },
 
         onModeChange: ({ mode }: { mode: string }) => {
           if (mode === "listening") {
             audioInputStreamRef.current?.endSequence();
-            finalizeAgentMessage();
+            transcript.handleAgentDone();
           }
         },
 
         onDisconnect: () => {
-          clearPendingTimers();
+          transcript.cleanup();
           setStatus("idle");
         },
 
         onError: (message: string) => {
           console.error("ElevenLabs error:", message);
-          clearPendingTimers();
+          transcript.cleanup();
           setError(message);
           setStatus("error");
         },
@@ -304,18 +171,10 @@ export default function ConversationView({
       setError(message);
       setStatus("error");
     }
-  }, [
-    presets,
-    selectedIndex,
-    clearPendingTimers,
-    resetStreamingState,
-    finalizeAgentMessage,
-    scheduleTextUpdate,
-  ]);
+  }, [presets, selectedIndex, transcript]);
 
   const stop = useCallback(async () => {
-    clearPendingTimers();
-    resetStreamingState();
+    transcript.cleanup();
     try {
       await conversationRef.current?.endSession();
     } catch {}
@@ -328,7 +187,7 @@ export default function ConversationView({
     anamReadyRef.current = false;
     audioBufferRef.current = [];
     setStatus("idle");
-  }, [clearPendingTimers, resetStreamingState]);
+  }, [transcript]);
 
   return (
     <div className="w-full max-w-2xl flex flex-col items-center gap-4">
@@ -402,9 +261,9 @@ export default function ConversationView({
       </div>
 
       {/* Transcript */}
-      {messages.length > 0 && (
+      {transcript.messages.length > 0 && (
         <div className="w-full max-h-64 overflow-y-auto rounded-lg border border-zinc-800 p-4 space-y-2 text-sm">
-          {messages.map((msg, i) => (
+          {transcript.messages.map((msg, i) => (
             <div key={i} className="flex gap-2">
               <span
                 className={

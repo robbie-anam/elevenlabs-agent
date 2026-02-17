@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+/** Creates an Anam session token configured for audio-passthrough with the given avatar. */
 export async function POST(request: Request) {
   const apiKey = process.env.ANAM_API_KEY;
   if (!apiKey) {
@@ -10,7 +11,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => ({}));
-  const avatarId = body.avatarId || process.env.ANAM_AVATAR_ID;
+  const avatarId = body.avatarId;
 
   if (!avatarId) {
     return NextResponse.json(

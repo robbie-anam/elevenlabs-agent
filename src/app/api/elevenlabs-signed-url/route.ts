@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+/** Gets an ElevenLabs signed WebSocket URL for the given agent. */
 export async function POST(request: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
 
