@@ -193,22 +193,17 @@ export function useStreamingTranscript() {
   );
 
   /**
-   * Handle the complete agent message text (ground truth from onMessage).
-   * If alignment hasn't revealed all the text yet, jump to the end.
-   * Future alignment timers are harmless — their charIndex will be less than
-   * revealedIndexRef so they no-op.
+   * Store the complete agent message text (ground truth from onMessage).
+   * Does NOT advance the reveal index — alignment timers keep pacing the
+   * text out character by character. The full text is shown when
+   * finalizeAgentMessage fires at the end of the speech turn.
    */
-  const handleAgentMessage = useCallback(
-    (message: string) => {
-      agentMessageTextRef.current = message;
-      if (message.length > revealedIndexRef.current) {
-        clearPendingTimers();
-        revealedIndexRef.current = message.length;
-        scheduleTextUpdate();
-      }
-    },
-    [clearPendingTimers, scheduleTextUpdate]
-  );
+  const handleAgentMessage = useCallback((message: string) => {
+    agentMessageTextRef.current = message;
+    // Trigger a re-render so getDisplayText picks up the better source text
+    // (LLM ground truth vs TTS-normalized alignment chars)
+    scheduleTextUpdate();
+  }, [scheduleTextUpdate]);
 
   const handleAgentDone = useCallback(() => {
     finalizeAgentMessage();

@@ -210,7 +210,7 @@ export default function ConversationView({
       </div>
 
       {/* Avatar video */}
-      <div className="relative w-full aspect-[720/480] rounded-lg overflow-hidden bg-black">
+      <div className="relative w-full aspect-[720/480] rounded-lg overflow-hidden">
         <video
           id="avatar-video"
           autoPlay
