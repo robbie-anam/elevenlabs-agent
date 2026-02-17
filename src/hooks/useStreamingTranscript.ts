@@ -26,8 +26,14 @@ export type Message = {
  *   - RENDER_DELAY_MS: fixed offset to compensate for Anam's face rendering
  *     pipeline, so text appears when the avatar actually mouths the word.
  *
- * The hook schedules a setTimeout per character and batches DOM updates via
- * requestAnimationFrame to avoid excessive re-renders.
+ * Text is revealed using index-based slicing rather than string concatenation.
+ * A monotonically increasing `revealedIndexRef` tracks how many characters to
+ * show, and the display text is always `source.slice(0, revealedIndex)`. This
+ * guarantees text is always a correct prefix — even if timers fire out of order
+ * or onMessage arrives before alignment data finishes streaming.
+ *
+ * The hook batches DOM updates via requestAnimationFrame to avoid excessive
+ * re-renders.
  */
 
 /** Approximate delay for Anam's face rendering pipeline (ms) */
@@ -40,9 +46,14 @@ export function useStreamingTranscript() {
   const speechStartTimeRef = useRef(0);
   const cumulativeAudioMsRef = useRef(0);
   const pendingTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const streamingTextRef = useRef("");
+  /** Characters accumulated from alignment data (TTS-normalized text). */
   const fullAgentTextRef = useRef("");
+  /** Complete agent message from onMessage (LLM ground truth). */
   const agentMessageTextRef = useRef("");
+  /** How many characters to display — only moves forward. */
+  const revealedIndexRef = useRef(0);
+  /** Total characters received across all alignment blocks this turn. */
+  const alignedCharCountRef = useRef(0);
   const rafIdRef = useRef<number | null>(null);
 
   const clearPendingTimers = useCallback(() => {
@@ -57,18 +68,25 @@ export function useStreamingTranscript() {
   }, []);
 
   const resetStreamingState = useCallback(() => {
-    streamingTextRef.current = "";
     fullAgentTextRef.current = "";
     agentMessageTextRef.current = "";
     cumulativeAudioMsRef.current = 0;
     speechStartTimeRef.current = 0;
+    revealedIndexRef.current = 0;
+    alignedCharCountRef.current = 0;
+  }, []);
+
+  /** Build display text: prefer onMessage ground truth, fall back to alignment chars. */
+  const getDisplayText = useCallback(() => {
+    const source = agentMessageTextRef.current || fullAgentTextRef.current;
+    return source.slice(0, revealedIndexRef.current);
   }, []);
 
   const scheduleTextUpdate = useCallback(() => {
     if (rafIdRef.current !== null) return;
     rafIdRef.current = requestAnimationFrame(() => {
       rafIdRef.current = null;
-      const text = streamingTextRef.current;
+      const text = getDisplayText();
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "agent" && !last.interrupted) {
@@ -79,14 +97,12 @@ export function useStreamingTranscript() {
         return [...prev, { role: "agent", text }];
       });
     });
-  }, []);
+  }, [getDisplayText]);
 
   const finalizeAgentMessage = useCallback(() => {
     clearPendingTimers();
     const finalText =
-      agentMessageTextRef.current ||
-      fullAgentTextRef.current ||
-      streamingTextRef.current;
+      agentMessageTextRef.current || fullAgentTextRef.current;
     if (finalText) {
       setMessages((prev) => {
         const last = prev[prev.length - 1];
@@ -129,6 +145,10 @@ export function useStreamingTranscript() {
    * Called from onAudioAlignment — fires BEFORE onAudio for the same event,
    * so cumulativeAudioMsRef holds the total audio duration *before* this chunk
    * (exactly the offset we need).
+   *
+   * Each timer sets revealedIndexRef to its character's position. Since the
+   * index only moves forward, out-of-order timers and post-catch-up timers
+   * are harmless no-ops.
    */
   const handleAlignment = useCallback(
     ({
@@ -147,34 +167,43 @@ export function useStreamingTranscript() {
       const baseTime = speechStartTimeRef.current;
       const audioOffset = cumulativeAudioMsRef.current;
       const now = Date.now();
+      const startIndex = alignedCharCountRef.current;
 
       for (let i = 0; i < chars.length; i++) {
         fullAgentTextRef.current += chars[i];
+        const charIndex = startIndex + i;
 
         const revealAt =
           baseTime + audioOffset + char_start_times_ms[i] + RENDER_DELAY_MS;
         const delay = Math.max(0, revealAt - now);
 
         const timer = setTimeout(() => {
-          streamingTextRef.current += chars[i];
-          scheduleTextUpdate();
+          // Only advance forward — once caught up via onMessage, these are no-ops
+          if (charIndex + 1 > revealedIndexRef.current) {
+            revealedIndexRef.current = charIndex + 1;
+            scheduleTextUpdate();
+          }
         }, delay);
         pendingTimersRef.current.push(timer);
       }
+
+      alignedCharCountRef.current += chars.length;
     },
     [scheduleTextUpdate]
   );
 
   /**
    * Handle the complete agent message text (ground truth from onMessage).
-   * Cancels pending timers before catching up to avoid duplicate characters.
+   * If alignment hasn't revealed all the text yet, jump to the end.
+   * Future alignment timers are harmless — their charIndex will be less than
+   * revealedIndexRef so they no-op.
    */
   const handleAgentMessage = useCallback(
     (message: string) => {
       agentMessageTextRef.current = message;
-      if (message.length > streamingTextRef.current.length) {
+      if (message.length > revealedIndexRef.current) {
         clearPendingTimers();
-        streamingTextRef.current = message;
+        revealedIndexRef.current = message.length;
         scheduleTextUpdate();
       }
     },
@@ -187,7 +216,7 @@ export function useStreamingTranscript() {
 
   const handleInterrupt = useCallback(() => {
     clearPendingTimers();
-    const partialText = streamingTextRef.current;
+    const partialText = getDisplayText();
     resetStreamingState();
 
     setMessages((prev) => {
@@ -209,7 +238,7 @@ export function useStreamingTranscript() {
       }
       return prev;
     });
-  }, [clearPendingTimers, resetStreamingState]);
+  }, [clearPendingTimers, getDisplayText, resetStreamingState]);
 
   const reset = useCallback(() => {
     setMessages([]);
