@@ -33,21 +33,20 @@ export default function Home() {
       </h1>
       <ConversationView presets={presets} />
 
-      <footer className="fixed bottom-0 left-0 right-0 flex items-center justify-center gap-6 py-5 text-base text-zinc-300 bg-[var(--background)]/80 backdrop-blur-sm border-t border-zinc-800/50">
+      <footer className="fixed bottom-0 left-0 right-0 flex items-center justify-center gap-8 py-6 text-lg font-medium text-white bg-[var(--background)]/90 backdrop-blur-sm border-t border-zinc-700/50">
         <a
           href="https://anam.ai"
           target="_blank"
           rel="noopener noreferrer"
-          className="hover:text-white transition-colors"
+          className="px-6 py-2.5 rounded-full bg-white text-black hover:bg-zinc-200 transition-colors"
         >
           Sign Up For Free &rarr;
         </a>
-        <span className="text-zinc-600">|</span>
         <a
           href="https://anam.ai/cookbook/elevenlabs-expressive"
           target="_blank"
           rel="noopener noreferrer"
-          className="hover:text-white transition-colors"
+          className="px-6 py-2.5 rounded-full border border-zinc-500 text-white hover:bg-zinc-800 transition-colors"
         >
           Build Your Own &rarr;
         </a>
