@@ -14,11 +14,13 @@ export type Message = {
  *   Each character is revealed at:
  *     speechStartTime + cumulativeAudioOffset + charStartTime + RENDER_DELAY_MS
  *
- *   - speechStartTime: wall-clock timestamp when the first audio chunk of the
- *     current speech turn arrives (set in handleAudioChunk).
- *   - cumulativeAudioOffset: total duration of PCM audio received so far in
- *     this speech turn, used to position each alignment block relative to the
- *     start of speech.
+ *   - speechStartTime: wall-clock timestamp captured when the first alignment
+ *     of the current speech turn arrives.
+ *   - cumulativeAudioOffset: total duration of PCM audio received *before* this
+ *     chunk, used to position each alignment block relative to the start of
+ *     speech. Read from cumulativeAudioMsRef inside handleAlignment, which fires
+ *     before handleAudioChunk for the same event (the ElevenLabs SDK calls
+ *     onAudioAlignment before onAudio).
  *   - charStartTime: per-character offset within an alignment block, provided
  *     by ElevenLabs' onAudioAlignment callback.
  *   - RENDER_DELAY_MS: fixed offset to compensate for Anam's face rendering
@@ -37,7 +39,6 @@ export function useStreamingTranscript() {
   // --- Streaming refs ---
   const speechStartTimeRef = useRef(0);
   const cumulativeAudioMsRef = useRef(0);
-  const chunkAudioOffsetRef = useRef(0);
   const pendingTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const streamingTextRef = useRef("");
   const fullAgentTextRef = useRef("");
@@ -60,7 +61,6 @@ export function useStreamingTranscript() {
     fullAgentTextRef.current = "";
     agentMessageTextRef.current = "";
     cumulativeAudioMsRef.current = 0;
-    chunkAudioOffsetRef.current = 0;
     speechStartTimeRef.current = 0;
   }, []);
 
@@ -110,12 +110,12 @@ export function useStreamingTranscript() {
     setMessages((prev) => [...prev, { role: "user", text }]);
   }, []);
 
+  /**
+   * Track cumulative audio duration for alignment timing.
+   * Called from onAudio — fires AFTER onAudioAlignment for the same event,
+   * so cumulativeAudioMsRef is only incremented after alignment has read it.
+   */
   const handleAudioChunk = useCallback((base64Audio: string) => {
-    if (cumulativeAudioMsRef.current === 0) {
-      speechStartTimeRef.current = Date.now();
-    }
-    chunkAudioOffsetRef.current = cumulativeAudioMsRef.current;
-
     // PCM 16-bit mono @ 16 kHz → duration
     const paddingMatch = base64Audio.match(/=+$/);
     const padding = paddingMatch ? paddingMatch[0].length : 0;
@@ -124,6 +124,12 @@ export function useStreamingTranscript() {
     cumulativeAudioMsRef.current += durationMs;
   }, []);
 
+  /**
+   * Schedule character reveals timed to the avatar's speech.
+   * Called from onAudioAlignment — fires BEFORE onAudio for the same event,
+   * so cumulativeAudioMsRef holds the total audio duration *before* this chunk
+   * (exactly the offset we need).
+   */
   const handleAlignment = useCallback(
     ({
       chars,
@@ -133,8 +139,13 @@ export function useStreamingTranscript() {
       char_start_times_ms: number[];
       char_durations_ms: number[];
     }) => {
+      // Set speech start time on first alignment of the turn
+      if (speechStartTimeRef.current === 0) {
+        speechStartTimeRef.current = Date.now();
+      }
+
       const baseTime = speechStartTimeRef.current;
-      const audioOffset = chunkAudioOffsetRef.current;
+      const audioOffset = cumulativeAudioMsRef.current;
       const now = Date.now();
 
       for (let i = 0; i < chars.length; i++) {
@@ -154,15 +165,20 @@ export function useStreamingTranscript() {
     [scheduleTextUpdate]
   );
 
+  /**
+   * Handle the complete agent message text (ground truth from onMessage).
+   * Cancels pending timers before catching up to avoid duplicate characters.
+   */
   const handleAgentMessage = useCallback(
     (message: string) => {
       agentMessageTextRef.current = message;
       if (message.length > streamingTextRef.current.length) {
+        clearPendingTimers();
         streamingTextRef.current = message;
         scheduleTextUpdate();
       }
     },
-    [scheduleTextUpdate]
+    [clearPendingTimers, scheduleTextUpdate]
   );
 
   const handleAgentDone = useCallback(() => {
