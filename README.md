@@ -54,10 +54,13 @@ Each persona is an avatar + agent pair. You can configure up to 3 — they appea
 
 | Variable | Source |
 |---|---|
+| `PERSONA_1_NAME` | Display label (defaults to "Persona 1") |
 | `PERSONA_1_AVATAR_ID` | lab.anam.ai → Avatars |
 | `PERSONA_1_AGENT_ID` | elevenlabs.io → Agents dashboard |
+| `PERSONA_2_NAME` | (optional) Display label (defaults to "Persona 2") |
 | `PERSONA_2_AVATAR_ID` | (optional) second avatar |
 | `PERSONA_2_AGENT_ID` | (optional) second agent |
+| `PERSONA_3_NAME` | (optional) Display label (defaults to "Persona 3") |
 | `PERSONA_3_AVATAR_ID` | (optional) third avatar |
 | `PERSONA_3_AGENT_ID` | (optional) third agent |
 

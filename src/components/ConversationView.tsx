@@ -191,23 +191,25 @@ export default function ConversationView({
 
   return (
     <div className="w-full max-w-2xl flex flex-col items-center gap-4">
-      {/* Persona selector */}
-      <div className="flex gap-2">
-        {presets.map((preset, i) => (
-          <button
-            key={i}
-            onClick={() => setSelectedIndex(i)}
-            disabled={status === "connecting" || status === "connected"}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors disabled:opacity-50 ${
-              i === selectedIndex
-                ? "bg-white text-black"
-                : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
-            }`}
-          >
-            {preset.label}
-          </button>
-        ))}
-      </div>
+      {/* Persona selector — hidden when only one preset */}
+      {presets.length > 1 && (
+        <div className="flex gap-2">
+          {presets.map((preset, i) => (
+            <button
+              key={i}
+              onClick={() => setSelectedIndex(i)}
+              disabled={status === "connecting" || status === "connected"}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors disabled:opacity-50 ${
+                i === selectedIndex
+                  ? "bg-white text-black"
+                  : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+              }`}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Avatar video */}
       <div className="relative w-full aspect-[720/480] rounded-lg overflow-hidden">
