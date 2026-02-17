@@ -74,7 +74,7 @@ export default function Home() {
           Sign Up For Free &rarr;
         </a>
         <a
-          href="https://anam.ai/cookbook/elevenlabs-expressive"
+          href="https://anam.ai/cookbook/elevenlabs-expressive-voice-agents"
           target="_blank"
           rel="noopener noreferrer"
           className="px-6 py-2.5 rounded-full border border-zinc-500 text-white hover:bg-zinc-800 transition-colors"
