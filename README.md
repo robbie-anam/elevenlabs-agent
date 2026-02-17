@@ -32,14 +32,23 @@ User speaks → ElevenLabs SDK (mic) → WebSocket → ElevenLabs (STT → LLM �
 cp .env.local.example .env.local
 ```
 
-Fill in all four values:
+Fill in the shared keys and at least one persona:
 
 | Variable | Source |
 |---|---|
 | `ANAM_API_KEY` | lab.anam.ai → API Keys |
-| `ANAM_AVATAR_ID` | lab.anam.ai → Avatars |
 | `ELEVENLABS_API_KEY` | elevenlabs.io → API Keys |
-| `ELEVENLABS_AGENT_ID` | elevenlabs.io → Agents dashboard |
+
+Each persona is an avatar + agent pair. You can configure up to 3 — they appear as selector buttons in the UI:
+
+| Variable | Source |
+|---|---|
+| `PERSONA_1_AVATAR_ID` | lab.anam.ai → Avatars |
+| `PERSONA_1_AGENT_ID` | elevenlabs.io → Agents dashboard |
+| `PERSONA_2_AVATAR_ID` | (optional) second avatar |
+| `PERSONA_2_AGENT_ID` | (optional) second agent |
+| `PERSONA_3_AVATAR_ID` | (optional) third avatar |
+| `PERSONA_3_AGENT_ID` | (optional) third agent |
 
 ### 4. Run Locally
 
@@ -54,7 +63,7 @@ Open [http://localhost:3000](http://localhost:3000), click **Start**, grant mic 
 
 1. Push to GitHub
 2. Import in [Vercel](https://vercel.com)
-3. Add the four environment variables in Vercel dashboard
+3. Add the environment variables above in Vercel dashboard
 4. Deploy
 
 ## Verification Checklist
