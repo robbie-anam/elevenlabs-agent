@@ -1,25 +1,25 @@
 # ElevenLabs Expressive Voice Agent + Anam Avatar
 
-A Next.js app that connects an ElevenLabs voice agent (voice-to-voice via WebSocket) to an Anam avatar for real-time lip-synced video. ElevenLabs handles STT → LLM → TTS, Anam handles face generation from the audio.
+> **This branch uses the server-side integration** — the Anam engine connects to ElevenLabs directly. The client only uses the Anam SDK. If you need direct client-side control over the ElevenLabs connection, see the [`clientside_version`](https://github.com/anam-org/elevenlabs-agent/tree/clientside_version) branch.
 
-## Audio Flow
+A Next.js app that pairs an ElevenLabs conversational agent with an Anam avatar. ElevenLabs handles STT → LLM → TTS, Anam handles real-time lip-synced face generation — all orchestrated server-side by the Anam engine.
+
+## Architecture
 
 ```
-User speaks → ElevenLabs SDK (mic) → WebSocket → ElevenLabs (STT → LLM → TTS)
-                                                                   ↓
-<video> ← Anam WebRTC ← sendAudioChunk() ← onAudio callback ← base64 PCM chunks
+Client (Anam JS SDK) ──WebRTC──▶ Anam Engine ◀──WebSocket──▶ ElevenLabs (STT → LLM → TTS)
+                                      │
+                              Face generation
+                                      │
+                              WebRTC video/audio ──▶ Client
 ```
 
 ## How It Works
 
-This app bridges two SDKs:
-
-- **[ElevenLabs](https://elevenlabs.io)** handles voice intelligence — the SDK captures microphone audio, sends it over a WebSocket to ElevenLabs' cloud (STT → LLM → TTS), and returns synthesized speech as base64 PCM chunks.
-- **[Anam](https://anam.ai)** handles avatar rendering — it takes those PCM audio chunks via `sendAudioChunk()` and generates a real-time lip-synced video face delivered over WebRTC.
-
-The ElevenLabs SDK's built-in speaker is muted (volume 0) so the user only hears audio through the avatar's WebRTC stream.
-
-**Streaming transcript:** The ElevenLabs SDK provides per-character timing data via the `onAudioAlignment` callback. The app uses this to reveal transcript text character-by-character in sync with the avatar's speech, offset by a render delay to account for Anam's face generation pipeline. See `src/hooks/useStreamingTranscript.ts` for the timing model.
+1. The Next.js API route (`/api/anam-session`) fetches an ElevenLabs **signed URL** using your API key, then requests an Anam **session token** with `elevenLabsAgentSettings` attached.
+2. The Anam engine uses the signed URL to open a WebSocket to ElevenLabs and manages the full voice pipeline — speech-to-text, LLM reasoning, and text-to-speech.
+3. The client creates an `AnamClient` with the session token and calls `streamToVideoElement()`. Mic audio goes to the engine over WebRTC; the avatar video and speech audio come back over the same connection.
+4. No ElevenLabs SDK is needed on the client — the only dependency is `@anam-ai/js-sdk`.
 
 ## Setup
 
@@ -28,8 +28,7 @@ The ElevenLabs SDK's built-in speaker is muted (volume 0) so the user only hears
 1. Go to [elevenlabs.io](https://elevenlabs.io) → **Agents** → **Create Agent**
 2. Configure your agent's system prompt and personality
 3. Under **Agent Voice**, select **V3 Conversational** as the TTS model (enables expressive mode)
-4. Under **Advanced** settings, set output audio format to `pcm_16000`
-5. Copy the **Agent ID**
+4. Copy the **Agent ID**
 
 ### 2. Anam Avatar
 
