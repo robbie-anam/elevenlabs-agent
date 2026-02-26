@@ -1,6 +1,6 @@
 # ElevenLabs Expressive Voice Agent + Anam Avatar
 
-> **This branch uses the server-side integration** — the Anam engine connects to ElevenLabs directly. The client only uses the Anam SDK. If you need direct client-side control over the ElevenLabs connection, see the [`clientside_version`](https://github.com/anam-org/elevenlabs-agent/tree/clientside_version) branch.
+> **This branch uses the server-side integration** — the Anam engine connects to ElevenLabs directly. The client only uses the Anam SDK. If you need direct client-side control over the ElevenLabs connection, see the [`clientside_version`](https://github.com/robbie-anam/elevenlabs-agent/tree/clientside_version) branch.
 
 A Next.js app that pairs an ElevenLabs conversational agent with an Anam avatar. ElevenLabs handles STT → LLM → TTS, Anam handles real-time lip-synced face generation — all orchestrated server-side by the Anam engine.
 
