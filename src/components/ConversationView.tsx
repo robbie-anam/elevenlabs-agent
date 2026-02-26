@@ -1,28 +1,25 @@
 /**
- * ConversationView — orchestrates an ElevenLabs voice agent with an Anam avatar.
+ * ConversationView — starts an Anam avatar session backed by an ElevenLabs
+ * voice agent running server-side on the engine.
  *
- * Audio flow:
- *   User speaks → mic captured by ElevenLabs SDK → WebSocket → ElevenLabs cloud
- *   (STT → LLM → TTS) → base64 PCM chunks arrive via onAudio callback →
- *   forwarded to Anam via sendAudioChunk() → Anam generates a face video
- *   stream delivered over WebRTC to the <video> element.
- *
- * The ElevenLabs SDK is muted (volume 0) so the user only hears audio through
- * the avatar's WebRTC stream, avoiding double playback.
- *
- * Transcript streaming is handled by useStreamingTranscript — it schedules
- * character reveals timed to match the avatar's speech using alignment data
- * from ElevenLabs.
+ * The client only deals with the Anam SDK — mic audio is captured over
+ * WebRTC, and the avatar video + audio are streamed back. All ElevenLabs
+ * STT → LLM → TTS orchestration happens on the engine.
  */
 "use client";
 
 import { useRef, useState, useCallback } from "react";
 import { AnamEvent, createClient, type AnamClient } from "@anam-ai/js-sdk";
-import { Conversation } from "@elevenlabs/client";
 import type { Preset } from "@/app/page";
-import { useStreamingTranscript } from "@/hooks/useStreamingTranscript";
 
 type Status = "idle" | "connecting" | "connected" | "error";
+
+type Message = {
+  id: string;
+  role: "user" | "persona";
+  content: string;
+  interrupted?: boolean;
+};
 
 export default function ConversationView({
   presets,
@@ -32,133 +29,83 @@ export default function ConversationView({
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [messages, setMessages] = useState<Message[]>([]);
 
   const anamClientRef = useRef<AnamClient | null>(null);
-  const audioInputStreamRef = useRef<ReturnType<
-    AnamClient["createAgentAudioInputStream"]
-  > | null>(null);
-  const conversationRef = useRef<Conversation | null>(null);
-  const anamReadyRef = useRef(false);
-  const audioBufferRef = useRef<string[]>([]);
-
-  const transcript = useStreamingTranscript();
 
   const start = useCallback(async () => {
     setStatus("connecting");
     setError(null);
-    anamReadyRef.current = false;
-    audioBufferRef.current = [];
-    transcript.reset();
+    setMessages([]);
 
     try {
       const { avatarId, agentId } = presets[selectedIndex];
 
-      // Fetch tokens in parallel
-      const [anamRes, elRes] = await Promise.all([
-        fetch("/api/anam-session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ avatarId }),
-        }),
-        fetch("/api/elevenlabs-signed-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ agentId }),
-        }),
-      ]);
+      const res = await fetch("/api/anam-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ avatarId, agentId }),
+      });
 
-      if (!anamRes.ok) {
-        const body = await anamRes.json();
-        throw new Error(body.error ?? "Failed to get Anam session token");
-      }
-      if (!elRes.ok) {
-        const body = await elRes.json();
-        throw new Error(body.error ?? "Failed to get ElevenLabs signed URL");
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error ?? "Failed to get session token");
       }
 
-      const { sessionToken } = await anamRes.json();
-      const { signedUrl } = await elRes.json();
-      console.log("Tokens fetched OK");
+      const { sessionToken } = await res.json();
 
-      // --- Anam setup ---
+      // Debug: decode JWT to inspect token type
+      try {
+        const payload = JSON.parse(atob(sessionToken.split(".")[1]));
+        console.log("Token payload:", payload);
+      } catch {}
+
       const anamClient = createClient(sessionToken, {
-        disableInputAudio: true,
+        ...(process.env.NEXT_PUBLIC_ANAM_API_URL && {
+          api: { baseUrl: process.env.NEXT_PUBLIC_ANAM_API_URL },
+        }),
       });
       anamClientRef.current = anamClient;
 
+      // Stream events fire on every chunk; accumulate into messages by id
       anamClient.addListener(
-        AnamEvent.TALK_STREAM_INTERRUPTED,
-        transcript.handleInterrupt
+        AnamEvent.MESSAGE_STREAM_EVENT_RECEIVED,
+        (evt: {
+          id: string;
+          content: string;
+          role: string;
+          endOfSpeech: boolean;
+          interrupted: boolean;
+        }) => {
+          setMessages((prev) => {
+            const idx = prev.findIndex((m) => m.id === evt.id);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = {
+                ...next[idx],
+                content: next[idx].content + evt.content,
+                interrupted: evt.interrupted,
+              };
+              return next;
+            }
+            return [
+              ...prev,
+              {
+                id: evt.id,
+                role: evt.role as "user" | "persona",
+                content: evt.content,
+                interrupted: evt.interrupted,
+              },
+            ];
+          });
+        }
       );
 
-      anamClient.addListener(AnamEvent.SESSION_READY, () => {
-        // Flush any audio that arrived before Anam was ready
-        for (const chunk of audioBufferRef.current) {
-          audioInputStreamRef.current?.sendAudioChunk(chunk);
-        }
-        audioBufferRef.current = [];
-        anamReadyRef.current = true;
+      anamClient.addListener(AnamEvent.CONNECTION_CLOSED, () => {
+        setStatus("idle");
       });
 
       await anamClient.streamToVideoElement("avatar-video");
-      console.log("Anam streaming OK");
-
-      const audioInputStream = anamClient.createAgentAudioInputStream({
-        encoding: "pcm_s16le",
-        sampleRate: 16000,
-        channels: 1,
-      });
-      audioInputStreamRef.current = audioInputStream;
-
-      // --- ElevenLabs setup ---
-      console.log("Starting ElevenLabs session...");
-      const conversation = await Conversation.startSession({
-        signedUrl,
-
-        onAudio: (base64Audio: string) => {
-          transcript.handleAudioChunk(base64Audio);
-
-          if (anamReadyRef.current) {
-            audioInputStreamRef.current?.sendAudioChunk(base64Audio);
-          } else {
-            audioBufferRef.current.push(base64Audio);
-          }
-        },
-
-        onAudioAlignment: transcript.handleAlignment,
-
-        onMessage: ({ role, message }: { role: string; message: string }) => {
-          if (role === "user") {
-            transcript.addUserMessage(message);
-          } else {
-            transcript.handleAgentMessage(message);
-          }
-        },
-
-        onModeChange: ({ mode }: { mode: string }) => {
-          if (mode === "listening") {
-            audioInputStreamRef.current?.endSequence();
-            transcript.handleAgentDone();
-          }
-        },
-
-        onDisconnect: () => {
-          transcript.cleanup();
-          setStatus("idle");
-        },
-
-        onError: (message: string) => {
-          console.error("ElevenLabs error:", message);
-          transcript.cleanup();
-          setError(message);
-          setStatus("error");
-        },
-      });
-
-      // Mute ElevenLabs speaker — audio plays through Anam's WebRTC stream
-      conversation.setVolume({ volume: 0 });
-      conversationRef.current = conversation;
-
       setStatus("connected");
     } catch (err) {
       console.error("Start error:", err);
@@ -171,23 +118,15 @@ export default function ConversationView({
       setError(message);
       setStatus("error");
     }
-  }, [presets, selectedIndex, transcript]);
+  }, [presets, selectedIndex]);
 
   const stop = useCallback(async () => {
-    transcript.cleanup();
-    try {
-      await conversationRef.current?.endSession();
-    } catch {}
     try {
       await anamClientRef.current?.stopStreaming();
     } catch {}
-    conversationRef.current = null;
     anamClientRef.current = null;
-    audioInputStreamRef.current = null;
-    anamReadyRef.current = false;
-    audioBufferRef.current = [];
     setStatus("idle");
-  }, [transcript]);
+  }, []);
 
   return (
     <div className="w-full max-w-2xl flex flex-col items-center gap-4">
@@ -263,10 +202,10 @@ export default function ConversationView({
       </div>
 
       {/* Transcript */}
-      {transcript.messages.length > 0 && (
+      {messages.length > 0 && (
         <div className="w-full max-h-64 overflow-y-auto rounded-lg border border-zinc-800 p-4 space-y-2 text-sm">
-          {transcript.messages.map((msg, i) => (
-            <div key={i} className="flex gap-2">
+          {messages.map((msg) => (
+            <div key={msg.id} className="flex gap-2">
               <span
                 className={
                   msg.role === "user"
@@ -283,7 +222,7 @@ export default function ConversationView({
                     : "text-zinc-300"
                 }
               >
-                {msg.text}
+                {msg.content}
                 {msg.interrupted && (
                   <span className="text-zinc-500 ml-1">[interrupted]</span>
                 )}
