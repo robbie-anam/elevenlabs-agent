@@ -1,3 +1,6 @@
+***This is the client side example, it is strongly recommended to use the server side version on the [main branch](https://github.com/robbie-anam/elevenlabs-agent/tree/main) unless you have a specific use case for client side control of Elevenlabs. The serverside integration provides latency and other benefits.***
+
+
 # ElevenLabs Expressive Voice Agent + Anam Avatar
 
 A Next.js app that connects an ElevenLabs voice agent (voice-to-voice via WebSocket) to an Anam avatar for real-time lip-synced video. ElevenLabs handles STT → LLM → TTS, Anam handles face generation from the audio.
