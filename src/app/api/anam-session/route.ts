@@ -61,24 +61,30 @@ export async function POST(request: Request) {
 
   // Create Anam session token with ElevenLabs agent settings
   const anamApiUrl = process.env.ANAM_API_URL || "https://lab.anam.ai";
+  const sessionTokenBody = {
+    personaConfig: { avatarId },
+    environment: {
+      elevenLabsAgentSettings: {
+        signedUrl,
+        agentId,
+      },
+      ...(process.env.ANAM_POD_NAME && {
+        podName: process.env.ANAM_POD_NAME,
+      }),
+    },
+  };
+  console.log(
+    "Creating session token:",
+    `${anamApiUrl}/v1/auth/session-token`,
+    JSON.stringify(sessionTokenBody, null, 2)
+  );
   const anamRes = await fetch(`${anamApiUrl}/v1/auth/session-token`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${anamApiKey}`,
     },
-    body: JSON.stringify({
-      personaConfig: { avatarId },
-      environment: {
-        elevenLabsAgentSettings: {
-          signedUrl,
-          agentId,
-        },
-        ...(process.env.ANAM_POD_NAME && {
-          podName: process.env.ANAM_POD_NAME,
-        }),
-      },
-    }),
+    body: JSON.stringify(sessionTokenBody),
   });
 
   if (!anamRes.ok) {
