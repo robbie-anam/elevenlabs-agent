@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   const { signed_url: signedUrl } = await elRes.json();
 
   // Create Anam session token with ElevenLabs agent settings
-  const anamApiUrl = process.env.ANAM_API_URL || "https://api.anam.ai";
+  const anamApiUrl = process.env.ANAM_API_URL || "https://lab.anam.ai";
   const anamRes = await fetch(`${anamApiUrl}/v1/auth/session-token`, {
     method: "POST",
     headers: {
